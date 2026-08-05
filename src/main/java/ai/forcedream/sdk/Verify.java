@@ -65,6 +65,32 @@ final class Verify {
         return v.isTextual() ? v.asText() : Canonical.jsNumber(v.asDouble());
     }
 
+    /**
+     * Exact replica of the server's verifyMerkleInclusion. Each sibling carries its own
+     * position, so ordering is never derived from leaf_index. Hashing is over concatenated
+     * HEX STRINGS, not raw bytes -- matching the server exactly. An empty sibling array
+     * means the root is the leaf digest unchanged (the batch_size == 1 case, which is
+     * every real proof the platform has emitted to date).
+     */
+    static boolean verifyMerkleInclusion(String leafHash, JsonNode siblings, String expectedRoot) {
+        if (siblings == null || !siblings.isArray()) return false;
+        try {
+            String current = leafHash;
+            for (JsonNode step : siblings) {
+                if (step == null || !step.has("hash") || !step.get("hash").isTextual()) return false;
+                String siblingHash = step.get("hash").asText();
+                String position = step.has("position") ? step.get("position").asText() : null;
+                current = "right".equals(position)
+                        ? Canonical.sha256Hex(current + siblingHash)
+                        : Canonical.sha256Hex(siblingHash + current);
+            }
+            return current.equals(expectedRoot);
+        } catch (Exception e) {
+            // Contract: verification failure returns false, it never raises.
+            return false;
+        }
+    }
+
     static VerifyResult verifyProof(String apiBase, String taskId, JsonNode proofInput) throws Exception {
         JsonNode proof;
         if (proofInput != null) {
@@ -92,20 +118,37 @@ final class Verify {
         Signable signable = buildSignable(proof);
         String digest = Canonical.sha256Hex(Canonical.wfCanonical(signable.fields()));
 
+        String proofAlgorithm = proof.has("algorithm") && !proof.get("algorithm").isNull()
+                ? proof.get("algorithm").asText() : null;
+
         boolean verified = false;
         if (verifyingKey != null && proof.has("signature")) {
-            String algorithm = proof.has("algorithm") ? proof.get("algorithm").asText() : null;
-            if (algorithm == null || algorithm.equals("Ed25519")) {
-                try {
-                    byte[] sigBytes = Base64.getDecoder().decode(proof.get("signature").asText());
-                    byte[] digestBytes = hexToBytes(digest);
-                    Signature sig = Signature.getInstance("Ed25519");
-                    sig.initVerify(verifyingKey);
-                    sig.update(digestBytes);
+            try {
+                byte[] sigBytes = Base64.getDecoder().decode(proof.get("signature").asText());
+                Signature sig = Signature.getInstance("Ed25519");
+                sig.initVerify(verifyingKey);
+
+                if ("Ed25519-batched".equals(proofAlgorithm)) {
+                    // A batched proof is only as strong as this real double-check: the
+                    // digest must genuinely be a leaf of the claimed root, verified BEFORE
+                    // the signature is trusted. The signature is over the ROOT, not the
+                    // digest.
+                    String root = proof.has("merkle_root") && proof.get("merkle_root").isTextual()
+                            ? proof.get("merkle_root").asText() : null;
+                    JsonNode inclusion = proof.get("inclusion_proof");
+                    JsonNode siblings = inclusion != null ? inclusion.get("siblings") : null;
+
+                    if (root != null && !root.isEmpty()
+                            && verifyMerkleInclusion(digest, siblings, root)) {
+                        sig.update(hexToBytes(root));
+                        verified = sig.verify(sigBytes);
+                    }
+                } else if (proofAlgorithm == null || proofAlgorithm.equals("Ed25519")) {
+                    sig.update(hexToBytes(digest));
                     verified = sig.verify(sigBytes);
-                } catch (Exception e) {
-                    verified = false;
                 }
+            } catch (Exception e) {
+                verified = false;
             }
         }
 
@@ -115,7 +158,7 @@ final class Verify {
                 verified,
                 taskIdOut,
                 keyId,
-                "Ed25519",
+                proofAlgorithm != null ? proofAlgorithm : "Ed25519",
                 signable.fieldCount(),
                 true,
                 verified

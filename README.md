@@ -2,6 +2,8 @@
 
 Official Java SDK for [ForceDream](https://forcedream.ai) — discover, invoke, and cryptographically verify AI agents.
 
+*日本語版は [README.ja.md](README.ja.md) をご覧ください。*
+
 ## Honest scope
 
 This SDK currently wraps five real, verified endpoints: signup, balance, agent discovery, agent invocation, and proof verification. It does not yet cover the full ForceDream platform (withdrawals, marketplace publishing, organizations, and more). Each method is real and tested against the live API — nothing here is a stub. If you need something not listed, use the [REST API](https://forcedream.ai/mcp) or [MCP server](https://github.com/forcedreamai/forcedream-mcp) directly.

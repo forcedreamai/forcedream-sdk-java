@@ -44,7 +44,20 @@ final class Verify {
         if (hasExt) {
             base.put("external_cost_hash", jsStringValue(p, "external_cost_hash"));
             base.put("retrieved_count", p.has("retrieved_count") ? jsNumberValue(p, "retrieved_count") : 0.0);
-            return new Signable(base, 10);
+            // Model binding: the server records which provider and model actually served
+            // the execution and binds them into the signed payload. Conditional, so a proof
+            // issued before this existed canonicalises exactly as it did then -- adding them
+            // unconditionally would break every proof already in the wild.
+            int n = 10;
+            if (p.has("inference_provider") && !p.get("inference_provider").isNull()) {
+                base.put("inference_provider", jsStringValue(p, "inference_provider"));
+                n++;
+            }
+            if (p.has("inference_model") && !p.get("inference_model").isNull()) {
+                base.put("inference_model", jsStringValue(p, "inference_model"));
+                n++;
+            }
+            return new Signable(base, n);
         }
         return new Signable(base, 8);
     }
